@@ -6,7 +6,39 @@ from cgi import parse_qs, escape
 from PyQt4.QtCore import QBuffer, QIODevice
 
 
-def loadpage(url, w=1024, h=768, selector=None, waitforselector=None, waittext=None):
+def open_url(session, url, waitforselector=None, waittext=None):
+    """ Open url in the given session """
+
+    MAXTRIES = 5
+
+    while MAXTRIES > 0:
+        try:
+            page, extra_resources = session.open(url)
+
+            # wait for a css selector
+            if waitforselector is not None:
+                try:
+                    session.wait_for_selector(waitforselector, timeout=90)
+                except:
+                    pass
+            if waittext is not None:
+                try:
+                    session.wait_for_text(waittext, timeout=30)
+                except:
+                    pass
+
+            session.wait_for_page_loaded()
+        except Exception, e:
+            MAXTRIES -= 1
+            print "retry", MAXTRIES, e
+        else:
+            MAXTRIES = 0 # if no exception
+            print "done !"
+
+
+def loadpage(url, outformat='JPG', w=1024, selector=None, waitforselector=None, waittext=None, recalc=False):
+    """ Load page and capture output """
+
     status = "404 NotFound"
     response_headers = []
     response_body = ["404 NotFound"]
@@ -15,31 +47,30 @@ def loadpage(url, w=1024, h=768, selector=None, waitforselector=None, waittext=N
 
     ghost = Ghost()
     try:
-        with ghost.start() as session:
+        with ghost.start(java_enabled=False) as session:
             # manage proxy
             if "http_proxy" in os.environ:
                 host, port = os.environ["http_proxy"].replace("http://","").split(":")
                 session.set_proxy("http", host=host, port=int(port))
 
             # set viewport size
-            session.set_viewport_size(w,h)
+            session.set_viewport_size(w,768) # base height = 768
             
             # load page
-            page, extra_resources = session.open(url)
-
-            # wait for a css selector
-            if waitforselector is not None:
-                session.wait_for_selector(waitforselector, timeout=90)
-            if waittext is not None:
-                try:
-                    session.wait_for_text(waittext, timeout=30)
-                except:
-                    pass
-
+            open_url(session, url, waitforselector, waittext)
             session.wait_for_page_loaded()
 
+            # set the view port to stick to the real height
+            session.set_viewport_size(w, session.main_frame.contentsSize().height())
+
+            if recalc:
+                # if recalc is true, we can now 
+                # reload page with the correct viewport size
+                open_url(session, url, waitforselector, waittext)
+                session.wait_for_page_loaded()
+
             cap = None
-            if selector:
+            if selector is not None:
                 cap = session.capture(selector=selector)
             else:
                 cap = session.capture()
@@ -47,16 +78,17 @@ def loadpage(url, w=1024, h=768, selector=None, waitforselector=None, waittext=N
             # create a buffered image
             buffer = QBuffer()
             buffer.open(QIODevice.ReadWrite)
-            cap.save(buffer, "PNG")
+            cap.save(buffer, 'JPG' if outformat.upper() in ('JPG', 'JPEG') else 'PNG')
             buffer.close()
 
         # write image
         response_body = [bytes(buffer.data())]
         status = "200 OK"
         response_headers = [
-            ('Content-Type', 'image/png'),
+            ('Content-Type', 'image/' + 'jpeg' if outformat.upper() in ('JPG','JPEG') else 'PNG'),
         ]
     except Exception, e:
+        print e
         response_body = [
             "There were an error...",
             "\n",
@@ -70,25 +102,43 @@ def loadpage(url, w=1024, h=768, selector=None, waitforselector=None, waittext=N
     return status, response_headers, response_body
 
 
+
+def get_param(qs, name, value):
+    return qs.get(name, [value])[0]
+
 def app(environ, start_response):
+    """ Main WSGI application """
+
     d = parse_qs(environ['QUERY_STRING'])
-    url = d.get('url',[''])[0]
-    selector = d.get('selector',[''])[0]
-    waitforselector = d.get('waitforselector',[None])[0]
-    resolution = d.get('resolution', ['1024x768'])[0]
-    waittext = d.get('waittext', [None])[0]
-    
-    w,h = [int(x) for x in resolution.split('x')]
-    if h < 0:
-        # a decent height is needed to load images
-        # that are below
-        h = 768
 
+    # url to load
+    url             = get_param(d, 'url', None)
+    # selector to capture (css)
+    selector        = get_param(d, 'selector', None) 
+    # wait that selector before to catpure
+    waitforselector = get_param(d, 'waitforselector', None)
+    # wait that text before to capture
+    waittext        = get_param(d, 'waittext', None)
+    # width of virtual browser
+    viewportwidth   = int(get_param(d, 'viewportwidth', 1024))
+    # output catpure format (png, jpeg)
+    outformat       = get_param(d, 'output', 'jpeg')
+    # if the content is lazy loaded, that will reload page with a calculated
+    # page height: so there will be 2 page load !
+    recalc          = get_param(d, 'lazy', 'false')
 
-    status, response_headers, response_body = loadpage(url, w, h, selector, waitforselector, waittext)
+    status, response_headers, response_body = loadpage(
+            url, 
+            outformat, 
+            viewportwidth, 
+            selector, 
+            waitforselector, 
+            waittext, 
+            recalc=True if recalc.lower() == 'true' else False
+        )
             
     start_response(status, response_headers)
-    return response_body
+    return iter(response_body)
     
 if __name__ == "__main__":
     from wsgiref.simple_server import make_server
