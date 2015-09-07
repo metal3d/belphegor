@@ -5,7 +5,6 @@ Licence: GPLv3
 Author: Patrice FERLET <metal3d@gmail.com>
 """
 import os
-import time
 from ghost import Ghost
 from cgi import parse_qs, escape
 
@@ -14,6 +13,7 @@ from PyQt4.QtCore import QBuffer, QIODevice
 
 MAXRETRIES = 5
 MAXSLEEP   = 10
+SLEEPSTEP = 0.01
 
 def open_url(session, url, waitforselector=None, waittext=None):
     """ Open url in the given session """
@@ -84,9 +84,10 @@ def loadpage(url,
                 open_url(session, url, waitforselector, waittext)
 
             if waitsecond is not None:
-                waitsecond = int(waitsecond) if waitsecond <= MAXSLEEP else MAXSLEEP
-                #session.sleep(waitsecond)
-                time.sleep(waitsecond)
+                waitsecond = float(waitsecond) if waitsecond <= MAXSLEEP else MAXSLEEP
+                while waitsecond > 0.0:
+                    waitsecond -= SLEEPSTEP
+                    session.sleep(SLEEPSTEP)
 
             # do capture now
             cap = None
