@@ -28,8 +28,8 @@ pip install Ghost.py
 Get this repository:
 
 ```
-git clone https://github.com/metal3d/docker-belphegor.git
-cd docker-belphegor
+git clone https://github.com/metal3d/belphegor.git
+cd belphegor
 ```
 
 
