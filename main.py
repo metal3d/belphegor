@@ -27,10 +27,9 @@ def open_url(session, url, waitforselector=None, waittext=None):
                 except:
                     pass
 
-            session.wait_for_page_loaded()
         except Exception, e:
             MAXTRIES -= 1
-            print "retry", MAXTRIES, e
+            print "retry", MAXTRIES, e, url
         else:
             MAXTRIES = 0 # if no exception
             print "done !"
@@ -42,7 +41,7 @@ def loadpage(url, outformat='JPG', w=1024, selector=None, waitforselector=None, 
     status = "404 NotFound"
     response_headers = []
     response_body = ["404 NotFound"]
-    if url == "":
+    if url is None or url == "":
         return status, response_headers, response_body
 
     ghost = Ghost()
