@@ -9,13 +9,53 @@ from ghost import Ghost
 from cgi import parse_qs, escape
 
 from PyQt4.QtCore import QBuffer, QIODevice
+import logging
+logging.getLogger().setLevel(logging.WARNING)
 
 
 MAXRETRIES = 5
 MAXSLEEP   = 10
 SLEEPSTEP = 0.01
 
-def open_url(session, url, waitforselector=None, waittext=None):
+
+def scroll_to_bottom(session):
+    """ Scroll down page
+    see https://github.com/jeanphix/Ghost.py/issues/259
+    """
+    x = session.main_frame.scrollPosition().x()
+    y = 0
+    height = session.page.viewportSize().height()
+    logging.info("frame %d %d %d" % (height, x, y))
+
+    while y + height < session.main_frame.contentsSize().height():
+        y = y + height
+        logging.debug("scroll %d %d" % (x, y))
+        session.main_frame.scroll(x, y)
+        session.sleep()
+
+    session.wait_for_page_loaded()
+
+
+def capture_image(session, selector=None, outformat="jpg"):
+    """ capture page as image """
+
+    # do capture now
+    cap = None
+    if selector is not None:
+        cap = session.capture(selector=selector)
+    else:
+        cap = session.capture()
+
+    # create a buffered image
+    buffer = QBuffer()
+    buffer.open(QIODevice.ReadWrite)
+    cap.save(buffer, 'JPG' if outformat.upper() in ('JPG', 'JPEG') else 'PNG')
+    buffer.close()
+    return buffer, 'image/' + 'jpeg' if outformat.upper() in ('JPG','JPEG') else 'png'
+
+    
+
+def open_url(session, url, waitforselector=None, waittext=None, lazy=False):
     """ Open url in the given session """
 
     MAXTRIES = MAXRETRIES
@@ -28,20 +68,25 @@ def open_url(session, url, waitforselector=None, waittext=None):
             if waitforselector is not None:
                 try:
                     session.wait_for_selector(waitforselector, timeout=90)
-                except:
+                except Exception, e:
+                    logging.exception(e)
                     pass
             if waittext is not None:
                 try:
                     session.wait_for_text(waittext, timeout=30)
-                except:
+                except Exception, e:
+                    logging.exception(e)
                     pass
 
         except Exception, e:
             MAXTRIES -= 1
-            print "[RETRY]", url, MAXTRIES, ':: CAUSE: ', e
+            logging.exception("[RETRY] %s %d %s" % (url, MAXTRIES,e))
         else:
             MAXTRIES = 0 # if no exception
-            print "[FETCHED]", url
+            logging.info("[FETCHED] %s" % url)
+
+    if not lazy:
+        scroll_to_bottom(session)
 
 
 def loadpage(url, 
@@ -58,12 +103,14 @@ def loadpage(url,
     status = "404 NotFound"
     response_headers = []
     response_body = ["404 NotFound"]
+    content_type="text/html"
+
     if url is None or url == "":
         return status, response_headers, response_body
 
     ghost = Ghost()
     try:
-        with ghost.start(java_enabled=False) as session:
+        with ghost.start(java_enabled=False, display=False) as session:
             # manage proxy
             if "http_proxy" in os.environ:
                 host, port = os.environ["http_proxy"].replace("http://","").split(":")
@@ -73,7 +120,7 @@ def loadpage(url,
             session.set_viewport_size(w, h)
             
             # load page
-            open_url(session, url, waitforselector, waittext)
+            open_url(session, url, waitforselector, waittext, recalc)
 
             if recalc:
                 # set the view port to stick to the real height before to reload
@@ -89,28 +136,21 @@ def loadpage(url,
                     waitsecond -= SLEEPSTEP
                     session.sleep(SLEEPSTEP)
 
-            # do capture now
-            cap = None
-            if selector is not None:
-                cap = session.capture(selector=selector)
+            if outformat.upper() in ('PNG', 'JPG', 'JPEG'):
+                buffer, content_type = capture_image(session, outformat=outformat, selector=selector)
+                buffer = buffer.data()
             else:
-                cap = session.capture()
-
-            # create a buffered image
-            buffer = QBuffer()
-            buffer.open(QIODevice.ReadWrite)
-            cap.save(buffer, 'JPG' if outformat.upper() in ('JPG', 'JPEG') else 'PNG')
-            buffer.close()
-
+                buffer = session.content.encode("utf-8")
+            
         # write image
-        response_body = [bytes(buffer.data())]
+        response_body = [bytes(buffer)]
         status = "200 OK"
         response_headers = [
-            ('Content-Type', 'image/' + 'jpeg' 
-                if outformat.upper() in ('JPG','JPEG') else 'PNG'),
+            ('Content-Type', content_type),
         ]
+
     except Exception, e:
-        print e
+        logging.exception(e)
         response_body = [
             "There were an error...",
             "\n",
@@ -144,8 +184,8 @@ def app(environ, start_response):
     # width of virtual browser
     viewportwidth   = int(get_param(d, 'viewportwidth', 1024))
     # height of virtual browser
-    viewportheight   = int(get_param(d, 'viewportheight', 10))
-    # output catpure format (png, jpeg)
+    viewportheight   = int(get_param(d, 'viewportheight', 550))
+    # output catpure format (png, jpeg, jpg, html)
     outformat       = get_param(d, 'output', 'jpeg')
     # if the content is lazy loaded, that will reload page with a calculated
     # page height: so there will be 2 page load !
