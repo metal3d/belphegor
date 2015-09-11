@@ -97,7 +97,8 @@ def loadpage(url,
         waitsecond=None, 
         waitforselector=None,
         waittext=None,
-        recalc=False):
+        recalc=False,
+        agent=None):
     """ Load page and capture output """
 
     status = "404 NotFound"
@@ -110,7 +111,10 @@ def loadpage(url,
 
     ghost = Ghost()
     try:
-        with ghost.start(java_enabled=False, display=False) as session:
+        # append suffix if any
+        agent = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/535.2 (KHTML, like Gecko) Chrome/15.0.874.121 Safari/535.2%s' % (' '+agent if agent is not None else '')
+
+        with ghost.start(java_enabled=False, display=False, user_agent=agent) as session:
             # manage proxy
             if "http_proxy" in os.environ:
                 host, port = os.environ["http_proxy"].replace("http://","").split(":")
@@ -171,6 +175,10 @@ def get_param(qs, name, value):
 def app(environ, start_response):
     """ Main WSGI application """
 
+    agent = None
+    if 'USER_AGENT_SUFFIX' in os.environ:
+        agent = os.environ['USER_AGENT_SUFFIX']
+
     d = parse_qs(environ['QUERY_STRING'])
 
     # url to load
@@ -184,7 +192,7 @@ def app(environ, start_response):
     # width of virtual browser
     viewportwidth   = int(get_param(d, 'viewportwidth', 1024))
     # height of virtual browser
-    viewportheight   = int(get_param(d, 'viewportheight', 550))
+    viewportheight  = int(get_param(d, 'viewportheight', 550))
     # output catpure format (png, jpeg, jpg, html)
     outformat       = get_param(d, 'output', 'jpeg')
     # if the content is lazy loaded, that will reload page with a calculated
@@ -192,6 +200,8 @@ def app(environ, start_response):
     recalc          = get_param(d, 'lazy', 'false')
     # force to wait before to do the capture
     waitsecond      = get_param(d, 'sleep', None)
+    # suffix user-agent
+    agent           = get_param(d, "uasuffix", agent)
 
     status, response_headers, response_body = loadpage(
             url, 
@@ -202,7 +212,8 @@ def app(environ, start_response):
             waitsecond,
             waitforselector, 
             waittext, 
-            recalc=recalc.lower() == 'true'
+            recalc=recalc.lower() == 'true',
+            agent = agent
         )
             
     # start to respond
