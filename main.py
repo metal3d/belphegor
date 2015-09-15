@@ -185,7 +185,7 @@ def check_add_cors(response_headers):
     # If we allow origin to be callable from ajax:
     CORS = os.environ.get('CORS', False)
     if CORS:
-        if CORS is True:
+        if CORS in ("true", True):
             CORS = "*"
         response_headers.append(('Access-Control-Allow-Methods', 'GET, POST'))
         response_headers.append(('Access-Control-Allow-Origin', CORS))
