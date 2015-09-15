@@ -181,14 +181,15 @@ def get_param(qs, name, value):
     return ret[0]
 
 
-def check_add_cors(response_headers):
+def check_add_cors(response_headers, environ):
     # If we allow origin to be callable from ajax:
     CORS = os.environ.get('CORS', False)
     if CORS:
-        if CORS in ("true", True):
-            CORS = "*"
-        response_headers.append(('Access-Control-Allow-Methods', 'GET, POST'))
+        if CORS in ("true", True): CORS = "*"
+        response_headers.append(('Access-Control-Allow-Methods', 'GET, POST, OPTIONS'))
         response_headers.append(('Access-Control-Allow-Origin', CORS))
+        ach = environ.get('HTTP_ACCESS_CONTROL_REQUEST_HEADERS', False)
+        if ach: response_headers.append(('Access-Control-Allow-Headers', ach))
         return True
     return False
 
@@ -205,7 +206,7 @@ def app(environ, start_response):
 
     if environ.get('REQUEST_METHOD') == 'OPTIONS':
         response_headers = []
-        check_add_cors(response_headers)
+        check_add_cors(response_headers, environ)
         start_response('201 NoContent', response_headers)
         return ''
 
@@ -267,7 +268,7 @@ def app(environ, start_response):
             agent = agent
         )
             
-    check_add_cors(response_headers)
+    check_add_cors(response_headers, environ)
 
     # start to respond
     start_response(status, response_headers)
