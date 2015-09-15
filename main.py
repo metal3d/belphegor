@@ -5,12 +5,13 @@ Licence: GPLv3
 Author: Patrice FERLET <metal3d@gmail.com>
 """
 import os
+import json
 from ghost import Ghost
 from cgi import parse_qs, escape
 
 from PyQt4.QtCore import QBuffer, QIODevice
 import logging
-logging.getLogger().setLevel(logging.WARNING)
+logging.getLogger().setLevel(logging.DEBUG)
 
 
 MAXRETRIES = 5
@@ -76,7 +77,6 @@ def open_url(session, url, waitforselector=None, waittext=None, lazy=False):
                     session.wait_for_text(waittext, timeout=30)
                 except Exception, e:
                     logging.exception(e)
-                    pass
 
         except Exception, e:
             MAXTRIES -= 1
@@ -170,7 +170,28 @@ def loadpage(url,
 
 
 def get_param(qs, name, value):
-    return qs.get(name, [value])[0]
+    """ Returns the get/post param or a default value"""
+
+    ret = qs.get(name, [value])
+    # probably taken from json, it's a string, int, float...
+    if type(ret) is not list:
+        return ret
+
+    # so... it's a list
+    return ret[0]
+
+
+def check_add_cors(response_headers):
+    # If we allow origin to be callable from ajax:
+    CORS = os.environ.get('CORS', False)
+    if CORS:
+        if CORS is True:
+            CORS = "*"
+        response_headers.append(('Access-Control-Allow-Methods', 'GET, POST'))
+        response_headers.append(('Access-Control-Allow-Origin', CORS))
+        return True
+    return False
+
 
 def app(environ, start_response):
     """ Main WSGI application """
@@ -180,6 +201,36 @@ def app(environ, start_response):
         agent = os.environ['USER_AGENT_SUFFIX']
 
     d = parse_qs(environ['QUERY_STRING'])
+
+
+    if environ.get('REQUEST_METHOD') == 'OPTIONS':
+        response_headers = []
+        check_add_cors(response_headers)
+        start_response('201 NoContent', response_headers)
+        return ''
+
+    if environ.get('REQUEST_METHOD', 'GET') == 'POST':
+        request_body_size = 0
+        try:
+            request_body_size = int(environ.get('CONTENT_LENGTH', 0))
+        except ValueError:
+            pass
+
+        request_body = environ['wsgi.input'].read(request_body_size)
+
+        # try to load json
+        if environ.get('CONTENT_TYPE', '') == 'application/json':
+            try:
+                post_data = json.loads(request_body)
+                d.update(post_data)
+            except Exception, e:
+                logging.exception(e)
+                start_response('400 BadRequest',[
+                    ('Content-Type', 'application/json')
+                ])
+                return '{"error": "%s"}' % str(e)
+        else:
+            d.update(parse_qs(request_body))
 
     # url to load
     url             = get_param(d, 'url', None)
@@ -216,6 +267,8 @@ def app(environ, start_response):
             agent = agent
         )
             
+    check_add_cors(response_headers)
+
     # start to respond
     start_response(status, response_headers)
     return response_body
